@@ -70,22 +70,47 @@ local COLS = 2
 
 -- the saved settings and their fallbacks: the game replaces the global
 -- with the saved version after loading, so reads always go through Opt()
-local optDefaults = { verdict = 1, details = 1, trend = 1, autohide = 0, lock = 0, yellow = 70 }
+local optDefaults = { verdict = 1, details = 1, trend = 1, autohide = 0, lock = 0, yellow = 70, icons = 1, dps = 1, card = 1 }
 
--- the saved variable made safe: every sub-table present or freshly created
+-- the saved variable made safe: the game can land a nil on the stored
+-- global even after this file initialized it (the per-addon saved chunk
+-- runs around addon load time), so every read re-seats the table first;
+-- without this, one nil turn makes every DB() call "index a nil value"
 local function DB()
   local d = AZTotemManagerDB
+  if type(d) ~= "table" then
+    d = {}
+    AZTotemManagerDB = d
+  end
   if type(d.opt) ~= "table" then d.opt = {} end
   if type(d.known) ~= "table" then d.known = {} end
   if type(d.hidden) ~= "table" then d.hidden = {} end
+  if type(d.type) ~= "table" then d.type = {} end
   return d
 end
 
--- one setting: saved value when set, else the default above
+-- one setting: saved value when set, else the default above (yellow's own
+-- per-totem overrides live in DB().type[key], see the settings section)
 local function Opt(k)
   local v = DB().opt[k]
   if v == nil then return optDefaults[k] end
   return v
+end
+
+-- per-totem overrides: DB().type[key] = { icon = 0/1, dps = 0/1 };
+-- nil means "follow the global setting"
+local function TypeOf(k)
+  local t = DB().type[k]
+  if type(t) ~= "table" then t = {} end
+  return t
+end
+
+-- the effective switch for a per-totem toggle: the type's own override when
+-- set (0 or 1), otherwise the global counterpart's value
+local function SwitchOf(k, key, global)
+  local own = TypeOf(k)[key]
+  if own ~= nil then return own end
+  return Opt(global)
 end
 
 -- one decimal for a number or "?" when it is not one
@@ -580,7 +605,7 @@ local function MeasureCard(i, t, k)
 
   -- live DPS only once the meter has data for this totem type
   local ddps = DPSOf(k)
-  if ddps then
+  if ddps and SwitchOf(k, "dps", "dps") == 1 then
     c.dps:SetText("DPS: " .. Abb(ddps))
     c.dps:Show()
     wtext = c.dps:GetStringWidth()
@@ -644,12 +669,17 @@ local function DrawCard(i, t, k, wide)
   c.name:SetPoint("TOP", fr, "TOP", 0, -4)
   local y = 4 + NAME_H + 2
 
-  -- 0.130: a texture set is guarded, a missing icon file must not kill the card
-  pcall(c.icon.SetTexture, c.icon, IconOf(t, k))
-  c.icon:SetWidth(ICON_SIZE)
-  c.icon:SetHeight(ICON_SIZE)
-  c.icon:SetPoint("TOP", fr, "TOP", 0, -y)
-  y = y + ICON_SIZE + 5
+  -- the icon: per-totem and global switches, both need to say show
+  if SwitchOf(k, "icon", "icons") == 1 then
+    pcall(c.icon.SetTexture, c.icon, IconOf(t, k))
+    c.icon:Show()
+    c.icon:SetWidth(ICON_SIZE)
+    c.icon:SetHeight(ICON_SIZE)
+    c.icon:SetPoint("TOP", fr, "TOP", 0, -y)
+    y = y + ICON_SIZE + 5
+  else
+    c.icon:Hide()
+  end
 
   c.tot:Show()
   c.tot:SetPoint("TOPLEFT", fr, "TOPLEFT", CARD_PAD, -y)
@@ -750,12 +780,22 @@ end
 --   6. draw them at that width, center the header, place the cards in a
 --      grid (a lone last card centered), size the frame to fit
 ------------------------------------------------------------
+-- per tick the elapsed time must come from arg1 - which game 0.130 stopped
+-- passing to OnUpdate (their own shipped addons carry "arg1 or 0") - so
+-- without the argument the real frame gap is measured off GetTime()
 local driver = CreateFrame("Frame", "TotemManagerDriver", UIParent)
 local drawT, sampleT = 0, 0
+local lastTick = nil
 
 driver:SetScript("OnUpdate", function()
-  drawT = drawT + arg1
-  sampleT = sampleT + arg1
+  local now = GetTime()
+  local dt = 0
+  if lastTick and now > lastTick and now - lastTick < 5 then
+    dt = now - lastTick
+  end
+  lastTick = now
+  drawT = drawT + (arg1 or dt)
+  sampleT = sampleT + (arg1 or dt)
   if drawT < 0.25 then return end
   drawT = 0
 
@@ -795,7 +835,8 @@ driver:SetScript("OnUpdate", function()
     for i = 1, table.getn(list) do
       local t = list[i]
       local k = KeyOf(t)
-      if not DB().hidden[k] then
+      -- the card renders unless this type's own Show switch turns it off
+      if SwitchOf(k, "card", "card") == 1 then
         table.insert(vis, { t = t, k = k })
         total = total + (t.count or 0)
         totalCap = totalCap + (t.cap or 0)
@@ -921,7 +962,7 @@ end)
 ------------------------------------------------------------
 local cfg = CreateFrame("Frame", "TotemManagerConfig", UIParent)
 cfg:SetWidth(440)
-cfg:SetHeight(560)
+cfg:SetHeight(668)
 cfg:SetPoint("CENTER", UIParent, "CENTER", 0, 0)
 cfg:SetFrameStrata("DIALOG")
 cfg:SetBackdrop({
@@ -970,34 +1011,16 @@ local function SetChecked(cb, on)
   if on then cb:SetChecked(1) else cb:SetChecked(nil) end
 end
 
--- section 1: the totem types ever seen, one checkbox each
-local sec1 = cfg:CreateFontString("AZTotemManagerCfgSec1", "OVERLAY", "GameFontNormal")
-sec1:SetPoint("TOPLEFT", cfg, "TOPLEFT", 24, -50)
-sec1:SetText("Totems and effects to show")
-
-local emptyText = cfg:CreateFontString("AZTotemManagerCfgEmpty", "OVERLAY", "GameFontHighlight")
-emptyText:SetPoint("TOPLEFT", cfg, "TOPLEFT", 28, -76)
-emptyText:SetWidth(380)
-emptyText:SetJustifyH("LEFT")
-emptyText:SetText("None for now: start a game and place a totem, and it will appear here.")
-
-local typeRows = {}
-for i = 1, 8 do
-  local cb = MakeCheck("TotemManagerTypeCheck" .. i, 24, -72 - (i - 1) * 24, "")
-  cb:SetScript("OnClick", function()
-    local k = this.key
-    if k then
-      -- checked = shown (the hidden map holds the hidden types)
-      if this:GetChecked() then DB().hidden[k] = nil else DB().hidden[k] = true end
-    end
-  end)
-  typeRows[i] = cb
+-- small section header (normal gold, the same font the row labels use)
+local function MakeSec(name, y, text)
+  local s = cfg:CreateFontString(name, "OVERLAY", "GameFontNormal")
+  s:SetPoint("TOPLEFT", cfg, "TOPLEFT", 24, y)
+  s:SetText(text)
+  return s
 end
 
--- section 2: the display options
-local sec2 = cfg:CreateFontString("AZTotemManagerCfgSec2", "OVERLAY", "GameFontNormal")
-sec2:SetPoint("TOPLEFT", cfg, "TOPLEFT", 24, -276)
-sec2:SetText("Display")
+-- section: the global defaults, applied to every card
+local sec1 = MakeSec("AZTotemManagerCfgSec1", -40, "Every card (global defaults)")
 
 local optChecks = {}
 local function MakeOpt(key, y, label)
@@ -1007,21 +1030,23 @@ local function MakeOpt(key, y, label)
   end)
   optChecks[key] = cb
 end
-MakeOpt("verdict", -300, "Show the verdict (are more upgrades still needed?)")
-MakeOpt("details", -324, "Show remaining time and duration")
-MakeOpt("trend", -348, "Show green and red dots when counts rise or fall")
-MakeOpt("autohide", -372, "Hide the frame when there are no totems")
-MakeOpt("lock", -396, "Lock the position (no more dragging)")
+MakeOpt("verdict", -64, "Show the verdict (are more upgrades still needed?)")
+MakeOpt("details", -88, "Show remaining time and duration")
+MakeOpt("trend", -112, "Show green and red dots when counts rise or fall")
+MakeOpt("icons", -136, "Show the totem icons")
+MakeOpt("dps", -160, "Show the DPS lines")
+MakeOpt("autohide", -184, "Hide the frame when there are no totems")
+MakeOpt("lock", -208, "Lock the position (no more dragging)")
 
 -- the yellow threshold: where the fill bar stops being red
 local yLabel = cfg:CreateFontString("AZTotemManagerCfgYLabel", "OVERLAY", "GameFontHighlight")
-yLabel:SetPoint("TOPLEFT", cfg, "TOPLEFT", 28, -434)
+yLabel:SetPoint("TOPLEFT", cfg, "TOPLEFT", 28, -246)
 yLabel:SetText("Yellow starts at")
 
 local yBox = CreateFrame("EditBox", "TotemManagerYellowBox", cfg)
 yBox:SetWidth(50)
 yBox:SetHeight(22)
-yBox:SetPoint("TOPLEFT", cfg, "TOPLEFT", 190, -430)
+yBox:SetPoint("TOPLEFT", cfg, "TOPLEFT", 170, -242)
 yBox:SetBackdrop({
   bgFile = "Interface\\Tooltips\\UI-Tooltip-Background",
   edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border",
@@ -1059,11 +1084,93 @@ yBox:SetScript("OnEscapePressed", function() this:SetText(tostring(Opt("yellow")
 yBox:SetScript("OnEditFocusLost", function() CommitYellow() end)
 
 local hint = cfg:CreateFontString("AZTotemManagerCfgHint", "OVERLAY", "GameFontHighlight")
-hint:SetPoint("TOPLEFT", cfg, "TOPLEFT", 28, -464)
-hint:SetWidth(384)
+hint:SetPoint("TOPLEFT", cfg, "TOPLEFT", 28, -278)
+hint:SetWidth(400)
 hint:SetJustifyH("LEFT")
 hint:SetJustifyV("TOP")
 hint:SetText("Red = 100% (cap reached, no point taking more). Yellow = between this threshold and 99%. Green = below: there is still room. Press Enter to apply.")
+
+-- section: the per-totem overrides, one row per known totem type:
+-- Show (does the card render at all) / Icon / DPS; an untouched switch
+-- follows the global default, a toggled one overrides it
+local sec2 = MakeSec("AZTotemManagerCfgSec2", -334, "Per totem (overrides)")
+
+local COL_CAPS = { { key = "card", global = "card", x = 244, cap = "Show" }, { key = "icon", global = "icons", x = 316, cap = "Icon" }, { key = "dps", global = "dps", x = 388, cap = "DPS" } }
+for i, cc in ipairs(COL_CAPS) do
+  local h = cfg:CreateFontString("AZTotemManagerCfgColHead" .. i, "OVERLAY", STAT_FONT)
+  h:SetPoint("TOPLEFT", cfg, "TOPLEFT", cc.x, -360)
+  h:SetText(cc.cap)
+end
+
+local typeRows = {}
+for i = 1, 8 do
+  local y = -386 - (i - 1) * 28
+  local nm = cfg:CreateFontString("AZTotemManagerCfgType" .. i .. "Name", "OVERLAY", "GameFontHighlight")
+  nm:SetPoint("TOPLEFT", cfg, "TOPLEFT", 28, y)
+  nm:SetWidth(200)
+  nm:SetText("")
+  local row = { label = nm, checks = {} }
+  for _, cc in ipairs(COL_CAPS) do
+    local cb = MakeCheck("TotemManagerTypeCheck" .. i .. cc.key, cc.x, y, "")
+    cb.key = cc.key
+    cb:SetScript("OnClick", function()
+      if row.key then
+        local t = DB().type[row.key]
+        if type(t) ~= "table" then t = {}; DB().type[row.key] = t end
+        if this:GetChecked() then t[cc.key] = 1 else t[cc.key] = 0 end
+      end
+    end)
+    row.checks[cc.key] = cb
+  end
+  typeRows[i] = row
+end
+-- nothing seen yet: the line under the per-totem header
+local emptyText = cfg:CreateFontString("AZTotemManagerCfgEmpty", "OVERLAY", "GameFontHighlight")
+emptyText:SetPoint("TOPLEFT", cfg, "TOPLEFT", 28, -384)
+emptyText:SetWidth(400)
+emptyText:SetJustifyH("LEFT")
+emptyText:SetText("None for now: start a game and place a totem, and it will appear here.")
+
+-- refill every control from the saved state: on show and once at load
+-- (the engine's script-event delivery is not something to bet the layout on)
+local function Refresh()
+  local keys = {}
+  for k, nm in pairs(DB().known) do table.insert(keys, k) end
+  table.sort(keys, function(a, b) return tostring(DB().known[a]) < tostring(DB().known[b]) end)
+
+  if table.getn(keys) == 0 then emptyText:Show() else emptyText:Hide() end
+
+  -- the globals
+  for key, cb in pairs(optChecks) do
+    SetChecked(cb, Opt(key) == 1)
+  end
+  yBox:SetText(tostring(Opt("yellow")))
+
+  -- the per-totem rows: up to 8 types; the Show switch's untouched state
+  -- means shown (there is no global card toggle; hiding is per type)
+  for i = 1, 8 do
+    local row = typeRows[i]
+    local k = keys[i]
+    if k then
+      row.key = k
+      row.label:SetText(tostring(DB().known[k]))
+      row.label:Show()
+      for _, cc in ipairs(COL_CAPS) do
+        local key = cc.key
+        local cb = row.checks[key]
+        -- the same effective switch the card render reads: own override
+        -- when set, otherwise the column's global default
+        SetChecked(cb, SwitchOf(k, key, cc.global) == 1)
+        cb:Show()
+      end
+    else
+      row.key = nil
+      row.label:SetText("")
+      row.label:Hide()
+      for _, key in ipairs({ "card", "icon", "dps" }) do row.checks[key]:Hide() end
+    end
+  end
+end
 
 -- a plain dialog button
 local function NewButton(name, width, label, onclick)
@@ -1075,41 +1182,11 @@ local function NewButton(name, width, label, onclick)
   return b
 end
 
--- refill every control from the saved state: called when the window shows,
--- with the totem types sorted by name (8 slots, the rest stay dark)
-local function Refresh()
-
-  local keys = {}
-  for k, nm in pairs(DB().known) do table.insert(keys, k) end
-  table.sort(keys, function(a, b) return tostring(DB().known[a]) < tostring(DB().known[b]) end)
-
-  if table.getn(keys) == 0 then emptyText:Show() else emptyText:Hide() end
-  for i = 1, 8 do
-    local cb = typeRows[i]
-    local k = keys[i]
-    if k then
-      cb.key = k
-      cb.label:SetText(tostring(DB().known[k]))
-      cb.label:Show()
-      cb:Show()
-      SetChecked(cb, not DB().hidden[k])
-    else
-      cb.key = nil
-      cb.label:SetText("")
-      cb:Hide()
-    end
-  end
-
-  for key, cb in pairs(optChecks) do
-    SetChecked(cb, Opt(key) == 1)
-  end
-  yBox:SetText(tostring(Opt("yellow")))
-end
-
--- reset to defaults: clear the options and the hidden list; the types stay
+-- reset to defaults: clear the options and the per-totem overrides; the
+-- seen-type list stays
 local defBtn = NewButton("TotemManagerDefaultsBtn", 170, "Reset to defaults", function()
   DB().opt = {}
-  DB().hidden = {}
+  DB().type = {}
   Refresh()
 end)
 defBtn:SetPoint("BOTTOM", cfg, "BOTTOM", -95, 22)
@@ -1121,6 +1198,10 @@ end)
 posBtn:SetPoint("BOTTOM", cfg, "BOTTOM", 95, 22)
 
 cfg:SetScript("OnShow", function() Refresh() end)
+
+-- also refresh once at load: the values must be right the first time the
+-- window opens even if the engine's script events get lost
+Refresh()
 
 -- the forward-declared settings opener
 ToggleConfig = function()
