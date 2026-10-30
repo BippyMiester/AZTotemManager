@@ -137,14 +137,19 @@ f:SetBackdrop({
 f:SetBackdropColor(0, 0, 0, 0.6)
 
 -- the stats' small font, with an availability probe: if the client ever
--- fails to render the small game font the lines fall back to the normal one
+-- fails to render the small game font the lines fall back to the normal
+-- one (0.130 regions are always named - unnamed regions are where the new
+-- font pipeline loses the font - and the probes never kill the load)
 local STAT_FONT = "GameFontNormalSmall"
 do
-  local probe = f:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-  probe:SetText("Duration: 88.8s")
-  local pw = probe:GetStringWidth()
+  local probe = f:CreateFontString("AZTotemManagerStatFontProbe", "OVERLAY", "GameFontNormalSmall")
+  local pw = nil
+  pcall(function()
+    probe:SetText("Duration: 88.8s")
+    pw = probe:GetStringWidth()
+  end)
   if type(pw) ~= "number" or pw < 20 then STAT_FONT = "GameFontNormal" end
-  probe:SetText("")
+  pcall(function() probe:SetText("") end)
 end
 
 -- the solid color texture for bars and dots, probed the same way:
@@ -152,21 +157,23 @@ end
 -- the tinted tooltip background is the fallback
 local TEX_SOLID = "Interface\\Tooltips\\UI-Tooltip-Background"
 do
-  local probe = f:CreateTexture(nil, "OVERLAY")
-  probe:SetTexture("Interface\\Buttons\\WHITE8X8")
-  local s = probe:GetTexture()
-  if type(s) == "string" and string.find(string.lower(tostring(s)), "white8x8", 1, true) then
-    TEX_SOLID = "Interface\\Buttons\\WHITE8X8"
-  end
+  local probe = f:CreateTexture("AZTotemManagerSolidProbe", "OVERLAY")
+  pcall(function()
+    probe:SetTexture("Interface\\Buttons\\WHITE8X8")
+    local s = probe:GetTexture()
+    if type(s) == "string" and string.find(string.lower(tostring(s)), "white8x8", 1, true) then
+      TEX_SOLID = "Interface\\Buttons\\WHITE8X8"
+    end
+  end)
 end
 
 -- the header: a small label and the live total under it, both centered
 -- over the cards by hand (manual centering, no width-bound strings)
-local headLabel = f:CreateFontString(nil, "OVERLAY", STAT_FONT)
+local headLabel = f:CreateFontString("AZTotemManagerHeadLabel", "OVERLAY", STAT_FONT)
 headLabel:SetTextColor(0.7, 0.7, 0.75)
 headLabel:SetText("Total Totems")
 
-local headValue = f:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
+local headValue = f:CreateFontString("AZTotemManagerHeadValue", "OVERLAY", "GameFontNormalLarge")
 headValue:SetTextColor(1, 0.82, 0)
 headValue:SetText("0")
 
@@ -402,11 +409,12 @@ end
 local DOT_WIDTHS = { 3, 5, 5, 5, 3 }
 local DOT_XOFFS = { 1, 0, 0, 0, 1 }
 
--- the dot as 1 px scanlines (round at this size, no texture file needed)
-local function MakeDot(fr)
+-- the dot as 1 px scanlines (round at this size, no texture file needed),
+-- one named texture per row
+local function MakeDot(fr, base)
   local t = {}
   for j = 1, table.getn(DOT_WIDTHS) do
-    t[j] = fr:CreateTexture(nil, "OVERLAY")
+    t[j] = fr:CreateTexture(base .. "Dot" .. j, "OVERLAY")
     t[j]:SetTexture(TEX_SOLID)
     t[j]:SetVertexColor(1, 0.82, 0)
     t[j]:SetWidth(DOT_WIDTHS[j])
@@ -436,52 +444,54 @@ end
 ------------------------------------------------------------
 local cards = {}
 
--- card number i, created the first time it is asked for
+-- card number i, created the first time it is asked for; 0.130 rule: every
+-- region (frame, string, texture) gets a unique name, matching the corpus
 local function GetCard(i)
   local c = cards[i]
   if c then return c end
 
+  local base = "AZTotemManagerCard" .. i
   c = {}
-  c.frame = CreateFrame("Frame", nil, f)
+  c.frame = CreateFrame("Frame", base, f)
   c.frame:SetBackdrop({
     bgFile = "Interface\\Tooltips\\UI-Tooltip-Background",
     tile = true, tileSize = 16,
   })
   c.frame:SetBackdropColor(0, 0, 0, 0.4)
 
-  c.name = c.frame:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+  c.name = c.frame:CreateFontString(base .. "Name", "OVERLAY", "GameFontNormal")
   c.name:SetTextColor(1, 1, 1)
 
-  c.icon = c.frame:CreateTexture(nil, "ARTWORK")
+  c.icon = c.frame:CreateTexture(base .. "Icon", "ARTWORK")
 
-  c.tot = c.frame:CreateFontString(nil, "OVERLAY", STAT_FONT)
+  c.tot = c.frame:CreateFontString(base .. "Tot", "OVERLAY", STAT_FONT)
   c.tot:SetTextColor(0.92, 0.8, 0.45)
 
-  c.left = c.frame:CreateFontString(nil, "OVERLAY", STAT_FONT)
+  c.left = c.frame:CreateFontString(base .. "Left", "OVERLAY", STAT_FONT)
   c.left:SetTextColor(0.75, 0.75, 0.8)
 
-  c.dur = c.frame:CreateFontString(nil, "OVERLAY", STAT_FONT)
+  c.dur = c.frame:CreateFontString(base .. "Dur", "OVERLAY", STAT_FONT)
   c.dur:SetTextColor(0.75, 0.75, 0.8)
 
-  c.dps = c.frame:CreateFontString(nil, "OVERLAY", STAT_FONT)
+  c.dps = c.frame:CreateFontString(base .. "Dps", "OVERLAY", STAT_FONT)
   c.dps:SetTextColor(0.75, 0.8, 0.9)
 
-  c.fillLabel = c.frame:CreateFontString(nil, "OVERLAY", STAT_FONT)
+  c.fillLabel = c.frame:CreateFontString(base .. "FillLabel", "OVERLAY", STAT_FONT)
   c.fillLabel:SetTextColor(0.55, 0.55, 0.6)
   c.fillLabel:SetText("Fill Status")
 
-  c.barbg = c.frame:CreateTexture(nil, "BORDER")
+  c.barbg = c.frame:CreateTexture(base .. "BarBg", "BORDER")
   c.barbg:SetTexture(TEX_SOLID)
   c.barbg:SetVertexColor(0.15, 0.15, 0.18)
 
-  c.barfill = c.frame:CreateTexture(nil, "ARTWORK")
+  c.barfill = c.frame:CreateTexture(base .. "BarFill", "ARTWORK")
   c.barfill:SetTexture(TEX_SOLID)
 
-  c.bartext = c.frame:CreateFontString(nil, "OVERLAY", STAT_FONT)
+  c.bartext = c.frame:CreateFontString(base .. "BarText", "OVERLAY", STAT_FONT)
 
-  c.verdict = c.frame:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
+  c.verdict = c.frame:CreateFontString(base .. "Verdict", "OVERLAY", "GameFontNormalLarge")
 
-  c.dot = MakeDot(c.frame)
+  c.dot = MakeDot(c.frame, base)
 
   -- card state: the verdict mode and fill percent cached from the measure
   -- pass, the trend dot state, and the measured Total line width for the
@@ -634,7 +644,8 @@ local function DrawCard(i, t, k, wide)
   c.name:SetPoint("TOP", fr, "TOP", 0, -4)
   local y = 4 + NAME_H + 2
 
-  c.icon:SetTexture(IconOf(t, k))
+  -- 0.130: a texture set is guarded, a missing icon file must not kill the card
+  pcall(c.icon.SetTexture, c.icon, IconOf(t, k))
   c.icon:SetWidth(ICON_SIZE)
   c.icon:SetHeight(ICON_SIZE)
   c.icon:SetPoint("TOP", fr, "TOP", 0, -y)
@@ -928,14 +939,15 @@ cfg:Hide()
 tinsert(UISpecialFrames, "TotemManagerConfig")
 
 -- the window's title and close button
-local title = cfg:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
+local title = cfg:CreateFontString("AZTotemManagerCfgTitle", "OVERLAY", "GameFontNormalLarge")
 title:SetPoint("TOP", cfg, "TOP", 0, -18)
 title:SetText("TotemManager - settings")
 
-local closeBtn = CreateFrame("Button", nil, cfg, "UIPanelCloseButton")
+local closeBtn = CreateFrame("Button", "AZTotemManagerCfgClose", cfg, "UIPanelCloseButton")
 closeBtn:SetPoint("TOPRIGHT", cfg, "TOPRIGHT", -5, -5)
 
--- a check button with its label to the right, placed inside the dialog
+-- a check button with its label to the right, placed inside the dialog;
+-- the label region is named off the button's name
 local function MakeCheck(name, x, y, label)
   local cb = CreateFrame("CheckButton", name, cfg)
   cb:SetWidth(26)
@@ -946,7 +958,7 @@ local function MakeCheck(name, x, y, label)
   cb:SetHighlightTexture("Interface\\Buttons\\UI-CheckBox-Highlight", "ADD")
   cb:SetCheckedTexture("Interface\\Buttons\\UI-CheckBox-Check")
   cb:SetDisabledCheckedTexture("Interface\\Buttons\\UI-CheckBox-Check-Disabled")
-  local l = cfg:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
+  local l = cfg:CreateFontString(name .. "CfgLabel", "OVERLAY", "GameFontHighlight")
   l:SetPoint("LEFT", cb, "RIGHT", 6, 0)
   l:SetText(label)
   cb.label = l
@@ -959,11 +971,11 @@ local function SetChecked(cb, on)
 end
 
 -- section 1: the totem types ever seen, one checkbox each
-local sec1 = cfg:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+local sec1 = cfg:CreateFontString("AZTotemManagerCfgSec1", "OVERLAY", "GameFontNormal")
 sec1:SetPoint("TOPLEFT", cfg, "TOPLEFT", 24, -50)
 sec1:SetText("Totems and effects to show")
 
-local emptyText = cfg:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
+local emptyText = cfg:CreateFontString("AZTotemManagerCfgEmpty", "OVERLAY", "GameFontHighlight")
 emptyText:SetPoint("TOPLEFT", cfg, "TOPLEFT", 28, -76)
 emptyText:SetWidth(380)
 emptyText:SetJustifyH("LEFT")
@@ -983,7 +995,7 @@ for i = 1, 8 do
 end
 
 -- section 2: the display options
-local sec2 = cfg:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+local sec2 = cfg:CreateFontString("AZTotemManagerCfgSec2", "OVERLAY", "GameFontNormal")
 sec2:SetPoint("TOPLEFT", cfg, "TOPLEFT", 24, -276)
 sec2:SetText("Display")
 
@@ -1002,7 +1014,7 @@ MakeOpt("autohide", -372, "Hide the frame when there are no totems")
 MakeOpt("lock", -396, "Lock the position (no more dragging)")
 
 -- the yellow threshold: where the fill bar stops being red
-local yLabel = cfg:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
+local yLabel = cfg:CreateFontString("AZTotemManagerCfgYLabel", "OVERLAY", "GameFontHighlight")
 yLabel:SetPoint("TOPLEFT", cfg, "TOPLEFT", 28, -434)
 yLabel:SetText("Yellow starts at")
 
@@ -1017,13 +1029,15 @@ yBox:SetBackdrop({
   insets = { left = 3, right = 3, top = 3, bottom = 3 }
 })
 yBox:SetBackdropColor(0, 0, 0, 0.8)
-yBox:SetFontObject(ChatFontNormal)
+-- ChatFontNormal is gone in game 0.130: the edit box uses a named object,
+-- string form (the corpus style)
+yBox:SetFontObject("GameFontNormal")
 yBox:SetTextInsets(6, 6, 0, 0)
 yBox:SetJustifyH("CENTER")
 yBox:SetAutoFocus(false)
 yBox:SetMaxLetters(3)
 
-local yUnit = cfg:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
+local yUnit = cfg:CreateFontString("AZTotemManagerCfgYUnit", "OVERLAY", "GameFontHighlight")
 yUnit:SetPoint("LEFT", yBox, "RIGHT", 8, 0)
 yUnit:SetText("% average fill")
 
@@ -1044,7 +1058,7 @@ yBox:SetScript("OnEnterPressed", function() CommitYellow() this:ClearFocus() end
 yBox:SetScript("OnEscapePressed", function() this:SetText(tostring(Opt("yellow"))) this:ClearFocus() end)
 yBox:SetScript("OnEditFocusLost", function() CommitYellow() end)
 
-local hint = cfg:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
+local hint = cfg:CreateFontString("AZTotemManagerCfgHint", "OVERLAY", "GameFontHighlight")
 hint:SetPoint("TOPLEFT", cfg, "TOPLEFT", 28, -464)
 hint:SetWidth(384)
 hint:SetJustifyH("LEFT")
