@@ -37,7 +37,7 @@
 -- Cards are sorted alphabetically by name (ties by key) so they never swap
 -- places mid-run.
 --
--- Settings: right-click a card or the frame, or /tw (reset, dump).
+-- Settings: right-click a card or the frame, or /tm (reset, dump).
 
 AZTotemManagerDB = AZTotemManagerDB or {}
 
@@ -1211,7 +1211,8 @@ end
 ------------------------------------------------------------
 -- Commands: reset and the diagnostic dump; anything else opens settings.
 ------------------------------------------------------------
-SLASH_TOTEMMANAGER1 = "/tw"
+-- Commands: reset and the diagnostic dump; anything else opens settings.
+SLASH_TOTEMMANAGER1 = "/tm"
 SLASH_TOTEMMANAGER2 = "/totemmanager"
 SlashCmdList["TOTEMMANAGER"] = function(msg)
   msg = string.lower(msg or "")
@@ -1219,18 +1220,92 @@ SlashCmdList["TOTEMMANAGER"] = function(msg)
     ResetPosition()
     DEFAULT_CHAT_FRAME:AddMessage("|cffffd100TotemManager|r: position reset to origin")
   elseif msg == "dump" then
-    -- diagnostics: every AZS_ global the game exposes, for API discovery
-    local names = {}
-    for name, v in pairs(_G) do
-      if string.find(name, "^AZS_") then
-        table.insert(names, name .. " : " .. type(v))
+    -- diagnostics: the live report also goes to a saved variable, so it
+    -- lands in benilla-config/saved/AZTotemManager.lua when the addon saves
+    -- (logout/exit), ready to copy and paste
+    local probeList = {
+      "AZS_GetTotems", "AZS_GetTotemCount", "AZS_GetMeter", "AZS_GetHealing",
+      "AZS_GetBossMeter", "AZS_GetRunTime", "AZS_GetPhase", "AZS_GetRunLength",
+      "AZS_GetRunSummary", "AZS_GetBosses", "AZS_GetGuardians", "AZS_GetDebuffs",
+      "AZS_GetSummons", "AZS_GetSummonGroups", "AZS_GetSummonCount", "AZS_GetTimers",
+      "AZS_GetUpcomingBosses", "AZS_GetLairs", "AZS_GetFlaggedLair", "AZS_GetRevive",
+      "AZS_GetStoredLevels", "AZS_OpenStoredLevels", "AZS_IsStoringLevels",
+      "AZS_SetStoringLevels", "AZS_SetHudShown", "AZS_IsHudShown", "AZS_UnitKind",
+      "AZS_RegisterBannerHandler", "AZS_UnregisterBannerHandler",
+      "AZS_TOTEMS", "AZS_RUN", "AZS_METER", "AZS_ZONE", "AZS_SPELLS",
+      "AZS_BUFFS", "AZS_PETS", "AZS_SCHEDULE", "AZS_TIMERS",
+    }
+    local checked = 0
+    local present = 0
+    local report = "-- TotemManager dump (game " .. (GetBuildInfo and select(4, GetBuildInfo()) or "?") .. ")\n"
+    for i = 1, table.getn(probeList) do
+      local nm = probeList[i]
+      checked = checked + 1
+      local v = nil
+      local chunk = loadstring("return " .. nm)
+      if chunk then
+        local ok, r = pcall(chunk)
+        if ok then v = r end
+      end
+      local shape = type(v)
+      if shape == "table" then
+        shape = shape .. " (n=" .. table.getn(v) .. ")"
+      end
+      if shape ~= "nil" then
+        present = present + 1
+        DEFAULT_CHAT_FRAME:AddMessage(nm .. " : " .. shape)
+        report = report .. nm .. " : " .. shape .. "\n"
+      else
+        DEFAULT_CHAT_FRAME:AddMessage(nm .. " : MISSING")
+        report = report .. nm .. " : MISSING\n"
       end
     end
-    table.sort(names)
-    for i = 1, table.getn(names) do
-      DEFAULT_CHAT_FRAME:AddMessage(names[i])
+
+    -- live snapshot: phase, clock, and the totem list's own contents
+    local phase = AZS_GetPhase and AZS_GetPhase() or "no-phase-function"
+    local rt = AZS_GetRunTime and AZS_GetRunTime() or "nil"
+    report = report .. "phase : " .. tostring(phase) .. "\n"
+    report = report .. "run time : " .. tostring(rt) .. "\n"
+    local raw = nil
+    do
+      local c2 = loadstring("return AZS_GetTotems()")
+      if c2 then
+        local ok, r = pcall(c2)
+        if ok then raw = r end
+      end
     end
-    DEFAULT_CHAT_FRAME:AddMessage("|cffffd100TotemManager|r: " .. table.getn(names) .. " AZS_ globals")
+    if type(raw) == "table" then
+      report = report .. "AZS_GetTotems() : table (n=" .. table.getn(raw) .. ")\n"
+      for i = 1, table.getn(raw) do
+        local t = raw[i]
+        report = report .. "  totem: key=" .. tostring(t.key) .. " name=" .. tostring(t.name)
+          .. " icon=" .. tostring(t.icon) .. " count=" .. tostring(t.count)
+          .. " cap=" .. tostring(t.cap) .. " dur=" .. tostring(t.duration or t.dur)
+          .. " remaining=" .. tostring(t.remaining) .. " spell=" .. tostring(t.spell) .. "\n"
+      end
+    else
+      report = report .. "AZS_GetTotems() : " .. type(raw) .. " (no totem list!)\n"
+    end
+
+    -- the meter's source names, so the DPS matching is checkable too
+    do
+      local ok, mlines, mtotal, mdps = false, nil, nil, nil
+      if AZS_GetMeter then ok, mlines, mtotal, mdps = pcall(AZS_GetMeter) end
+      if ok and type(mlines) == "table" then
+        report = report .. "AZS_GetMeter() : table (n=" .. table.getn(mlines) .. ", total " .. tostring(mtotal) .. ", dps " .. tostring(mdps) .. ")\n"
+        for i = 1, table.getn(mlines) do
+          local ln = mlines[i]
+          report = report .. "  meter: name=" .. tostring(ln.name) .. " dmg=" .. tostring(ln.dmg) .. " dps=" .. tostring(ln.dps) .. "\n"
+        end
+      else
+        report = report .. "AZS_GetMeter() : MISSING or errored\n"
+      end
+    end
+
+    -- the saved copy (lands in saved/AZTotemManager.lua when the addon saves)
+    DB().dumpText = report
+    DEFAULT_CHAT_FRAME:AddMessage("|cffffd100TotemManager|r: AZS probe - " .. present .. "/" .. checked
+      .. " present; full report saved (exit the game, then open benilla-config/saved/AZTotemManager.lua)")
   else
     ToggleConfig()
   end

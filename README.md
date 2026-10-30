@@ -25,10 +25,10 @@ Cards sit side by side and stay sorted alphabetically, so they never swap places
 
 | Command |  |
 | --- | --- |
-| `/tw` | Open or close the settings |
-| `/tw reset` | Put the frame back at its original spot |
-| `/tw dump` | Print every `AZS_` global to the chat frame (diagnostics) |
-| `/totemmanager` | Same as `/tw` |
+| `/tm` | Open or close the settings |
+| `/tm reset` | Put the frame back at its original spot |
+| `/tm dump` | Diagnostic report: a summary goes to chat, and the full report is saved into `benilla-config/saved/AZTotemManager.lua` when the addon saves (logout/exit) |
+| `/totemmanager` | Same as `/tm` |
 
 - Right click a card or the frame to open settings. Drag any card to move the whole frame.
 - Settings: show or hide the verdict, the remaining time and duration, the trend dot, auto hide when no totems are up, lock the position, and set where the yellow band starts (70% by default).
