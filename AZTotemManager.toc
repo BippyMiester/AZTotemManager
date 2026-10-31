@@ -2,6 +2,6 @@
 ## Title: TotemManager
 ## Notes: Live totem cards for Azeroth Survivors: totem count, next death, duration, live DPS, fill status bar and the upgrade verdict. Hover a card for the spell's tooltip.
 ## Author: BippyMiester
-## Version: 1.1.0
+## Version: 1.1.1
 ## SavedVariables: AZTotemManagerDB
 AZTotemManager.lua

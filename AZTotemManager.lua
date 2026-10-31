@@ -1223,30 +1223,55 @@ SlashCmdList["TOTEMMANAGER"] = function(msg)
     -- diagnostics: the live report also goes to a saved variable, so it
     -- lands in benilla-config/saved/AZTotemManager.lua when the addon saves
     -- (logout/exit), ready to copy and paste
-    local probeList = {
-      "AZS_GetTotems", "AZS_GetTotemCount", "AZS_GetMeter", "AZS_GetHealing",
-      "AZS_GetBossMeter", "AZS_GetRunTime", "AZS_GetPhase", "AZS_GetRunLength",
-      "AZS_GetRunSummary", "AZS_GetBosses", "AZS_GetGuardians", "AZS_GetDebuffs",
-      "AZS_GetSummons", "AZS_GetSummonGroups", "AZS_GetSummonCount", "AZS_GetTimers",
-      "AZS_GetUpcomingBosses", "AZS_GetLairs", "AZS_GetFlaggedLair", "AZS_GetRevive",
-      "AZS_GetStoredLevels", "AZS_OpenStoredLevels", "AZS_IsStoringLevels",
-      "AZS_SetStoringLevels", "AZS_SetHudShown", "AZS_IsHudShown", "AZS_UnitKind",
-      "AZS_RegisterBannerHandler", "AZS_UnregisterBannerHandler",
-      "AZS_TOTEMS", "AZS_RUN", "AZS_METER", "AZS_ZONE", "AZS_SPELLS",
-      "AZS_BUFFS", "AZS_PETS", "AZS_SCHEDULE", "AZS_TIMERS",
+    -- the AZS surface: every known name checked by direct reference (the
+    -- game sandbox exposes no global table enumerator either; this list is
+    -- fully static, nothing is built or run from strings)
+    local surface = {
+      { name = "AZS_GetTotems", v = AZS_GetTotems },
+      { name = "AZS_GetTotemCount", v = AZS_GetTotemCount },
+      { name = "AZS_GetMeter", v = AZS_GetMeter },
+      { name = "AZS_GetHealing", v = AZS_GetHealing },
+      { name = "AZS_GetBossMeter", v = AZS_GetBossMeter },
+      { name = "AZS_GetRunTime", v = AZS_GetRunTime },
+      { name = "AZS_GetPhase", v = AZS_GetPhase },
+      { name = "AZS_GetRunLength", v = AZS_GetRunLength },
+      { name = "AZS_GetRunSummary", v = AZS_GetRunSummary },
+      { name = "AZS_GetBosses", v = AZS_GetBosses },
+      { name = "AZS_GetGuardians", v = AZS_GetGuardians },
+      { name = "AZS_GetDebuffs", v = AZS_GetDebuffs },
+      { name = "AZS_GetSummons", v = AZS_GetSummons },
+      { name = "AZS_GetSummonGroups", v = AZS_GetSummonGroups },
+      { name = "AZS_GetSummonCount", v = AZS_GetSummonCount },
+      { name = "AZS_GetTimers", v = AZS_GetTimers },
+      { name = "AZS_GetUpcomingBosses", v = AZS_GetUpcomingBosses },
+      { name = "AZS_GetLairs", v = AZS_GetLairs },
+      { name = "AZS_GetFlaggedLair", v = AZS_GetFlaggedLair },
+      { name = "AZS_GetRevive", v = AZS_GetRevive },
+      { name = "AZS_GetStoredLevels", v = AZS_GetStoredLevels },
+      { name = "AZS_OpenStoredLevels", v = AZS_OpenStoredLevels },
+      { name = "AZS_IsStoringLevels", v = AZS_IsStoringLevels },
+      { name = "AZS_SetStoringLevels", v = AZS_SetStoringLevels },
+      { name = "AZS_SetHudShown", v = AZS_SetHudShown },
+      { name = "AZS_IsHudShown", v = AZS_IsHudShown },
+      { name = "AZS_UnitKind", v = AZS_UnitKind },
+      { name = "AZS_RegisterBannerHandler", v = AZS_RegisterBannerHandler },
+      { name = "AZS_UnregisterBannerHandler", v = AZS_UnregisterBannerHandler },
+      { name = "AZS_TOTEMS", v = AZS_TOTEMS },
+      { name = "AZS_RUN", v = AZS_RUN },
+      { name = "AZS_METER", v = AZS_METER },
+      { name = "AZS_ZONE", v = AZS_ZONE },
+      { name = "AZS_SPELLS", v = AZS_SPELLS },
+      { name = "AZS_BUFFS", v = AZS_BUFFS },
+      { name = "AZS_PETS", v = AZS_PETS },
+      { name = "AZS_SCHEDULE", v = AZS_SCHEDULE },
+      { name = "AZS_TIMERS", v = AZS_TIMERS },
     }
-    local checked = 0
+    local checked = table.getn(surface)
     local present = 0
     local report = "-- TotemManager dump (game " .. (GetBuildInfo and select(4, GetBuildInfo()) or "?") .. ")\n"
-    for i = 1, table.getn(probeList) do
-      local nm = probeList[i]
-      checked = checked + 1
-      local v = nil
-      local chunk = loadstring("return " .. nm)
-      if chunk then
-        local ok, r = pcall(chunk)
-        if ok then v = r end
-      end
+    for i = 1, checked do
+      local nm = surface[i].name
+      local v = surface[i].v
       local shape = type(v)
       if shape == "table" then
         shape = shape .. " (n=" .. table.getn(v) .. ")"
@@ -1266,13 +1291,11 @@ SlashCmdList["TOTEMMANAGER"] = function(msg)
     local rt = AZS_GetRunTime and AZS_GetRunTime() or "nil"
     report = report .. "phase : " .. tostring(phase) .. "\n"
     report = report .. "run time : " .. tostring(rt) .. "\n"
+    -- the totem list: a plain guarded call (no string chunks anywhere)
     local raw = nil
-    do
-      local c2 = loadstring("return AZS_GetTotems()")
-      if c2 then
-        local ok, r = pcall(c2)
-        if ok then raw = r end
-      end
+    if AZS_GetTotems then
+      local ok, r = pcall(AZS_GetTotems)
+      if ok then raw = r end
     end
     if type(raw) == "table" then
       report = report .. "AZS_GetTotems() : table (n=" .. table.getn(raw) .. ")\n"
